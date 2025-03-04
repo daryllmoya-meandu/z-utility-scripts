@@ -92,6 +92,7 @@ if [ "$package_json_changed" = true ]; then
     # Remove node_modules folder entirely to keep all dependencies up tcdo date
     if command -v remove-node-modules &> /dev/null; then
         remove-node-modules
+        echo "Running remove-node-modules command done. Cleanup done."
     else
         echo "Warning: remove-node-modules command not found. Skipping cleanup."
     fi

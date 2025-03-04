@@ -1,0 +1,20 @@
+{
+  "name": "release-reporter",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "run": ". $NVM_DIR/nvm.sh && nvm use && ts-node index.ts | pbcopy"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  }
+}
