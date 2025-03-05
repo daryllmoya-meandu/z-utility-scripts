@@ -13,9 +13,8 @@ const API_URL = "https://api.buildkite.com/v2/organizations/mryum/pipelines";
 const PAGE_PARAMS = "page=1&per_page=20";
 
 // ------------------------------------------------------------
-// Type Definitions
+// Interfaces
 // ------------------------------------------------------------
-
 interface Author {
   name: string;
 }
@@ -24,9 +23,9 @@ interface Build {
   message: string;
   state: string;
   blocked: boolean;
-  author?: Author;
-  number: number;
-  web_url: string;
+  author: Author;
+  number?: number;
+  web_url?: string;
 }
 
 type Pipeline = string;
@@ -37,7 +36,7 @@ interface PipelineBuilds {
   pipeline: string;
   builds: Build[];
   number: number;
-  url: string;
+  url: string | null;
 }
 
 // ------------------------------------------------------------
@@ -49,101 +48,110 @@ const fetchBuilds = async (
   pipeline: string,
   branch: string
 ): Promise<Build[]> => {
-  try {
-    const response = await fetch(
-      `${API_URL}/${pipeline}/builds?branch=${branch}&${PAGE_PARAMS}`,
-      { headers: { Authorization: `Bearer ${API_TOKEN}` } }
-    );
+  const response = await fetch(
+    `${API_URL}/${pipeline}/builds?branch=${branch}&${PAGE_PARAMS}`,
+    { headers: { Authorization: `Bearer ${API_TOKEN}` } }
+  );
 
-    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+  if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
 
-    return await response.json();
-  } catch (error) {
-    console.error(`Error fetching builds for ${pipeline}:`, error);
-    return [];
-  }
+  return await response.json();
 };
 
 /** Determines if a build needs a release */
 const needsRelease = (build: Build): boolean =>
   ["failed", "running"].includes(build.state) || build.blocked;
 
-/** Filters builds that need a release */
-const getReleaseBuilds = (builds: Build[]): Build[] =>
-  builds.filter(needsRelease);
+const getReleaseBuilds = (builds: Build[]): Build[] => {
+  const blockedBuilds: Build[] = [];
 
-/** Extracts the first line of a given text */
-const getFirstLine = (text: string): string => text.split("\n")[0] || text;
+  for (const build of builds) {
+    if (needsRelease(build)) {
+      blockedBuilds.push(build);
+    } else {
+      break;
+    }
+  }
 
-/** Maps a build to a formatted release note */
-const buildToReleaseNoteMapper = (build: Build): string =>
-  `${getFirstLine(build.message.replace(/\@/g, "@ "))} *by ${
-    build.author?.name || "(unknown)"
-  }*`;
+  return blockedBuilds;
+};
 
-/** Fetch builds for multiple pipelines */
+const buildToReleaseNoteMapper = (build: Build): string => {
+  const message = build.message.replace(/\@/g, "@ ");
+  return `${getFirstLine(message)} *by ${build?.author?.name || "(unknown)"}*`;
+};
+
+const getFirstLine = (text: string): string => {
+  const index: number = text.indexOf("\n");
+  return index === -1 ? text : text.substring(0, index);
+};
+
 const getPipelinesBuilds = async (
   pipelineTuples: PipelineTuple[]
-): Promise<PipelineBuilds[]> =>
-  Promise.all(
+): Promise<PipelineBuilds[]> => {
+  return Promise.all(
     pipelineTuples.map(async ([pipeline, branch]) => {
       const builds = await fetchBuilds(pipeline, branch);
-      const releaseBuild = builds[0];
+      const releaseBuild = builds.length > 0 ? builds[0] : null;
 
-      return releaseBuild
-        ? {
-            pipeline,
-            builds,
-            number: releaseBuild.number,
-            url: releaseBuild.web_url,
-          }
-        : { pipeline, builds: [], number: 0, url: "" };
+      return {
+        pipeline,
+        builds,
+        number: releaseBuild ? releaseBuild.number ?? 0 : 0,
+        url: releaseBuild ? releaseBuild.web_url ?? null : null,
+      };
     })
   );
+};
 
-/** Returns the markdown link for a build */
 const getBuildItemLink = (build: PipelineBuilds): string =>
   `[${build.number}](${build.url})`;
 
-/** Converts pipeline builds to a markdown list */
-const convertToMarkdownList = (pipelinesBuilds: PipelineBuilds[]): string =>
-  pipelinesBuilds
-    .map((pipelineBuilds) => {
-      const releaseBuilds = getReleaseBuilds(pipelineBuilds.builds);
-      const releaseNotes = releaseBuilds.map(buildToReleaseNoteMapper);
+const convertToMarkdownList = (pipelinesBuilds: PipelineBuilds[]): string => {
+  let markdown = "";
 
-      if (releaseNotes.length === 0) return "";
+  pipelinesBuilds.forEach((pipelineBuilds) => {
+    const releaseBuilds = getReleaseBuilds(pipelineBuilds.builds);
+    const releaseNotes = releaseBuilds.map(buildToReleaseNoteMapper);
 
-      const markdownHeader = `- \`${
-        pipelineBuilds.pipeline
-      }\` build ${getBuildItemLink(pipelineBuilds)}`;
+    if (releaseNotes.length === 0) return;
 
-      return releaseNotes.length === 1
-        ? `${markdownHeader}, ${releaseNotes[0]}\n`
-        : `${markdownHeader}:\n${releaseNotes
-            .map((note) => `    - ${note}`)
-            .join("\n")}`;
-    })
-    .join("\n");
+    markdown += `- \`${pipelineBuilds.pipeline}\` build ${getBuildItemLink(
+      pipelineBuilds
+    )}`;
 
-/** Returns today's release date */
-const getReleaseDate = (): string =>
-  new Intl.DateTimeFormat("en-US", {
+    if (releaseNotes.length === 1) {
+      markdown += `, ${releaseNotes[0]}\n`;
+      return;
+    }
+
+    markdown += ":\n";
+    releaseNotes.forEach((note) => {
+      markdown += `    - ${note}\n`;
+    });
+  });
+
+  return markdown;
+};
+
+const getReleaseDate = (): string => {
+  const today = new Date();
+  return today.toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
     month: "long",
     day: "numeric",
-  }).format(new Date());
+  });
+};
 
-/** Rounds minutes to the nearest base */
 const roundMinutesToNearestBase = (minutes: number, base: number): number =>
   Math.round(minutes / base) * base;
 
-/** Formats a Date object to HH:MM */
 const getReadableTime = (date: Date): string =>
-  `${date.getHours()}:${date.getMinutes().toString().padStart(2, "0")}`;
+  date.getMinutes() < 10
+    ? `${date.getHours()}:0${date.getMinutes()}`
+    : `${date.getHours()}:${date.getMinutes()}`;
 
-/** Gets the next closest rounded time in AEST/AEDT */
 const getNextClosest = (
   minutesInFuture: number,
   minutesToRoundTo: number
@@ -160,33 +168,31 @@ const getNextClosest = (
   return `${getReadableTime(releaseTimeLocal)} AEST/AEDT`;
 };
 
-/** Logs the release notes for multiple pipelines */
 const logReleaseNotes = async (pipelines: PipelineTuple[]): Promise<void> => {
   const pipelinesBuilds = await getPipelinesBuilds(pipelines);
-
-  console.log(`### Serve releases for ${getReleaseDate()}\n`);
+  console.log(`### Releases for ${getReleaseDate()}`);
+  console.log("");
   console.log(convertToMarkdownList(pipelinesBuilds));
-  console.log(
-    `Will :big-red-button: in approx. 30mins at ${getNextClosest(
-      30,
-      15
-    )} if no objections.`
-  );
+  // console.log(
+  //   `Will :big-red-button: in approx. 30mins at ${getNextClosest(
+  //     30,
+  //     15
+  //   )} if no objections.`
+  // );
 };
 
 // ------------------------------------------------------------
-// Main Program
+// Main program
 // ------------------------------------------------------------
-
 logReleaseNotes([
-  // ["beamer", "main"],
-  // ["cloudflare-workers", "main"],
-  // ["guest-gateway", "main"],
-  // ["manage-api", "main"],
-  // ["manage-frontend", "main"],
-  // ["mr-yum", "master"],
-  // ["mr-yum-deploy", "staging"],
-  // ["serve-api", "main"],
-  // ["serve-frontend", "main"],
+  ["beamer", "main"],
+  ["cloudflare-workers", "main"],
+  ["guest-gateway", "main"],
+  ["serve-api", "main"],
+  ["serve-frontend", "main"],
+  ["manage-api", "main"],
+  ["manage-frontend", "main"],
+  ["mr-yum", "master"],
+  ["mr-yum-deploy", "staging"],
   ["crew-bff", "main"],
 ]);

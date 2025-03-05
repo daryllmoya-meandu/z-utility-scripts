@@ -115,14 +115,15 @@ async function getPipelinesBuilds(pipelineTuples) {
     pipelineTuples.map(async (pipelineTuple) => {
       const [pipeline, branch] = pipelineTuple;
       const builds = await fetchBuilds(pipeline, branch);
-      const releaseBuild = builds[0];
-      const { number, web_url: url } = releaseBuild;
+
+      // Ensure there is at least one build
+      const releaseBuild = builds.length > 0 ? builds[0] : null;
 
       return {
         pipeline,
         builds,
-        number,
-        url,
+        number: releaseBuild ? releaseBuild.number : 0,
+        url: releaseBuild ? releaseBuild.web_url : null,
       };
     })
   );
@@ -263,5 +264,5 @@ logReleaseNotes([
   ["mr-yum-deploy", "staging"],
   ["serve-api", "main"],
   ["serve-frontend", "main"],
-  // ['db-tasks', 'main'],
+  ["crew-bff", "main"],
 ]);
